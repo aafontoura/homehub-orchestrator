@@ -1,0 +1,176 @@
+---
+- name: Backup config folder + container snapshot
+  hosts: rpi_homehub
+  become: yes
+
+  vars:
+    backup_dir_local: '/home/pi/local_bck'
+    smb_mount: '/mnt/backups_smb/homehub'
+    config_dir: '/home/pi/config'
+    backup_destination: '/mnt/backups_smb/homehub'
+    snapshots_dir: '{{ config_dir }}/snapshots'
+
+  tasks:
+    - name: Set backup timestamp
+      set_fact:
+        backup_timestamp: "{{ (ansible_date_time.iso8601 | to_datetime('%Y-%m-%dT%H:%M:%S%z')).strftime('%Y-%m-%d_%H-%M') }}"
+      # e.g. "2025-01-10_13-46"
+
+    - name: Ensure snapshots directory exists
+      file:
+        path: '{{ snapshots_dir }}'
+        state: directory
+        owner: pi
+        group: pi
+        mode: '0755'
+
+    - name: Gather Docker container snapshot
+      shell: >
+        docker ps --format '{{"{{"}}.Names{{"}}"}}: {{"{{"}}.Image{{"}}"}}' |
+        while read line; do
+          container=$(echo $line | awk -F ': ' '{print $1}')
+          image=$(echo $line | awk -F ': ' '{print $2}')
+          created=$(docker image inspect --format='{{"{{"}}.Created{{"}}"}}' $image 2>/dev/null || echo "unknown")
+          tag=$(docker image inspect --format='{{"{{"}}index .RepoTags 0{{"}}"}}' $image 2>/dev/null || echo "unknown")
+          echo "$container: $tag | Created: $created"
+        done && echo "Docker Version: $(docker --version)"
+      args:
+        executable: /bin/bash
+      register: docker_snap
+
+    - name: Create container snapshot file in snapshots folder
+      copy:
+        content: '{{ docker_snap.stdout }}'
+        dest: '{{ snapshots_dir }}/docker_containers_snapshot.txt'
+        mode: '0644'
+
+    - name: Gather OS information
+      shell: >
+        echo "Hostname: $(hostname)" &&
+        echo "OS: $(lsb_release -d -s || cat /etc/os-release | grep PRETTY_NAME | cut -d= -f2 | tr -d '\"')" &&
+        echo "Kernel: $(uname -r)" &&
+        echo "Architecture: $(uname -m)" &&
+        echo "Uptime: $(uptime -p)"
+      args:
+        executable: /bin/bash
+      register: os_info
+
+    - name: Create OS information snapshot file in snapshots folder
+      copy:
+        content: '{{ os_info.stdout }}'
+        dest: '{{ snapshots_dir }}/os_snapshot.txt'
+        mode: '0644'
+
+    - name: Gather disk usage snapshot
+      shell: df -h
+      args:
+        executable: /bin/bash
+      register: disk_usage
+
+    - name: Create disk usage snapshot file in snapshots folder
+      copy:
+        content: '{{ disk_usage.stdout }}'
+        dest: '{{ snapshots_dir }}/disk_usage_snapshot.txt'
+        mode: '0644'
+
+    - name: Gather installed packages snapshot
+      shell: dpkg-query -W -f='${binary:Package} ${Version}\n'
+      args:
+        executable: /bin/bash
+      register: installed_packages
+
+    - name: Create installed packages snapshot file in snapshots folder
+      copy:
+        content: '{{ installed_packages.stdout }}'
+        dest: '{{ snapshots_dir }}/installed_packages_snapshot.txt'
+        mode: '0644'
+
+    - name: Gather running processes snapshot
+      shell: ps aux
+      args:
+        executable: /bin/bash
+      register: running_processes
+
+    - name: Create running processes snapshot file in snapshots folder
+      copy:
+        content: '{{ running_processes.stdout }}'
+        dest: '{{ snapshots_dir }}/running_processes_snapshot.txt'
+        mode: '0644'
+
+    - name: Gather network configuration snapshot
+      shell: ip addr
+      args:
+        executable: /bin/bash
+      register: network_config
+
+    - name: Create network configuration snapshot file in snapshots folder
+      copy:
+        content: '{{ network_config.stdout }}'
+        dest: '{{ snapshots_dir }}/network_config_snapshot.txt'
+        mode: '0644'
+
+    - name: Gather system logs snapshot
+      shell: journalctl -n 100
+      args:
+        executable: /bin/bash
+      register: system_logs
+
+    - name: Create system logs snapshot file in snapshots folder
+      copy:
+        content: '{{ system_logs.stdout }}'
+        dest: '{{ snapshots_dir }}/system_logs_snapshot.txt'
+        mode: '0644'
+
+    - name: Gather environment variables snapshot
+      shell: printenv
+      args:
+        executable: /bin/bash
+      register: env_vars
+
+    - name: Create environment variables snapshot file in snapshots folder
+      copy:
+        content: '{{ env_vars.stdout }}'
+        dest: '{{ snapshots_dir }}/env_vars_snapshot.txt'
+        mode: '0644'
+
+    - name: Gather cron jobs snapshot
+      shell: |
+        crontab -l 2>/dev/null || echo "No crontab for root"
+      args:
+        executable: /bin/bash
+      register: cron_jobs
+
+    - name: Create cron jobs snapshot file in snapshots folder
+      copy:
+        content: '{{ cron_jobs.stdout }}'
+        dest: '{{ snapshots_dir }}/cron_jobs_snapshot.txt'
+        mode: '0644'
+
+    - name: Gather logs from all running Docker containers
+      shell: |
+        docker ps --format '{{"{{"}}.Names{{"}}"}}' |
+        while read container; do
+          echo "Logs for container: $container" >> {{ snapshots_dir }}/docker_container_logs.txt
+          docker logs --tail 100 $container >> {{ snapshots_dir }}/docker_container_logs.txt 2>&1
+          echo -e "\n---\n" >> {{ snapshots_dir }}/docker_container_logs.txt
+        done
+      args:
+        executable: /bin/bash
+      register: docker_logs
+
+    - name: Ensure Docker logs snapshot file exists
+      copy:
+        content: '{{ docker_logs.stdout if docker_logs.stdout else "No logs collected" }}'
+        dest: '{{ snapshots_dir }}/docker_container_logs.txt'
+        mode: '0644'
+
+    - name: Archive config folder (including snapshot) to final location
+      archive:
+        path: '{{ config_dir }}/*'
+        dest: '{{ backup_destination }}/{{ backup_timestamp }}_homehub.tar.gz'
+        format: gz
+
+    - name: Remove snapshot file from config folder (optional cleanup)
+      file:
+        path: '{{ config_dir }}/docker_containers_snapshot.txt'
+        state: absent

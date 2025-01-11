@@ -1,0 +1,61 @@
+- name: Clone GitHub Repository
+  hosts: rpi_homehub
+  become: yes
+
+  vars_files:
+    - group_vars/all/clone_repo.yml
+
+  tasks:
+    - name: Install Git
+      apt:
+        name: git
+        state: present
+        update_cache: yes
+
+    - name: Create .ssh directory for pi user
+      file:
+        path: /home/pi/.ssh
+        state: directory
+        owner: pi
+        group: pi
+        mode: '0700'
+
+    - name: Copy private key for GitHub
+      copy:
+        content: '{{ github_key }}'
+        dest: /home/pi/.ssh/id_github
+        owner: pi
+        group: pi
+        mode: '0600'
+      # By default, "content" expects a string.
+      # We get that string from github_deploy_key stored in vault.yml.
+
+    - name: Add github.com to known_hosts (avoid prompt on first clone)
+      known_hosts:
+        path: /home/pi/.ssh/known_hosts
+        name: github.com
+        key: "{{ lookup('pipe', 'ssh-keyscan github.com') }}"
+        state: present
+      # Alternatively, you can hardcode the RSA/ECDSA key, but ssh-keyscan is easier for automation.
+
+    - name: Check if repository exists
+      stat:
+        path: /home/pi/homehub/.git
+      register: repo_exists
+
+    - name: Pull changes if repository exists
+      command: git pull
+      args:
+        chdir: /home/pi/homehub
+      when: repo_exists.stat.exists
+      become_user: pi
+
+    - name: Clone the repository if it does not exist
+      git:
+        repo: 'git@github.com:aafontoura/homehub.git'
+        dest: '/home/pi/homehub'
+        version: main
+        key_file: '/home/pi/.ssh/id_github'
+      become_user: pi
+      when: not repo_exists.stat.exists
+      # 'key_file' tells Ansible to use that private key for cloning.

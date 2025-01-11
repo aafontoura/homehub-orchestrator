@@ -1,0 +1,55 @@
+- hosts: rpi_homehub
+  become: true
+  tasks:
+    - name: Update apt cache
+      apt:
+        update_cache: yes
+        cache_valid_time: 3600 # Cache is valid for 1 hour
+
+    - name: Install Docker dependencies
+      apt:
+        name:
+          - ca-certificates
+          - curl
+          - gnupg
+          - lsb-release
+        state: present
+
+    - name: Add Docker’s official GPG key
+      apt_key:
+        url: https://download.docker.com/linux/debian/gpg
+        state: present
+        validate_certs: yes
+
+    - name: Add Docker apt repository
+      apt_repository:
+        repo: deb [arch=armhf,arm64] https://download.docker.com/linux/debian {{ ansible_lsb.codename }} stable
+
+    - name: Install Docker engine
+      apt:
+        name: docker-ce
+        state: present
+        update_cache: yes
+
+    - name: Add pi user to docker group
+      user:
+        name: pi
+        append: yes
+        groups: docker
+
+    - name: Reset SSH connection to apply group changes
+      meta: reset_connection
+
+    - name: Install docker-compose plugin
+      apt:
+        name: docker-compose-plugin
+        state: present
+        update_cache: yes
+
+    - name: Verify Docker installation
+      command: docker --version
+      register: docker_version
+
+    - name: Output Docker version
+      debug:
+        msg: 'Docker version installed: {{ docker_version.stdout }}'

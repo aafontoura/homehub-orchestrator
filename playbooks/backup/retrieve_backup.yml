@@ -1,0 +1,90 @@
+- name: Retrieve and unpack backup with options
+  hosts: rpi_homehub
+  become: yes
+
+  vars:
+    # By default, this pattern matches any .tar.gz file.
+    # Pass a custom regex via -e "backup_pattern=^2024.*\.tar\.gz$" if desired.
+    backup_pattern: ".*\\.tar\\.gz$"
+
+  tasks:
+    - name: Ensure the SMB share folder exists
+      stat:
+        path: '/mnt/backups_smb/homehub'
+      register: smb_folder_stat
+
+    - name: Fail if the SMB share folder is not accessible
+      fail:
+        msg: "The SMB share folder '/mnt/backups_smb/homehub' is not accessible. Ensure it is mounted. Run SMB mount playbook (mount_backup_share.yaml)"
+      when: not smb_folder_stat.stat.exists
+
+    - name: Create local backup directory if not present
+      file:
+        path: '/home/pi/local_bck'
+        state: directory
+
+    - name: Check if /home/pi/config exists
+      stat:
+        path: '/home/pi/config'
+      register: ansible_directory_stat
+
+    - name: Archive current config files (local backup)
+      archive:
+        path: '/home/pi/config'
+        dest: '/home/pi/local_bck/config_backup_{{ ansible_date_time.date }}.tar.gz'
+        format: gz
+
+    - name: Clean up old config files
+      file:
+        path: '/home/pi/config'
+        state: absent
+      # This removes the entire folder
+      # If you want to remove contents but keep the folder, do a loop with file module or use 'safe mode' approach.
+
+    - name: Recreate empty config folder
+      file:
+        path: '/home/pi/config'
+        state: directory
+        owner: pi
+        group: pi
+
+    - name: Find latest matching tar.gz in /mnt/backups_smb/homehub
+      find:
+        paths: '/mnt/backups_smb/homehub'
+        patterns: '{{ backup_pattern }}'
+        file_type: file
+        use_regex: true
+        recurse: yes
+      register: backup_files
+
+    - name: Sort and get the latest backup file
+      set_fact:
+        latest_backup_file: "{{ backup_files.files | sort(attribute='mtime', reverse=true) | first }}"
+      when: backup_files.matched > 0
+
+    - name: Copy the latest backup to /home/pi/config
+      command: cp "{{ latest_backup_file.path }}" "/home/pi/config/latest_backup.tar.gz"
+      when: backup_files.matched > 0
+
+    - name: Extract backup into /home/pi/config
+      unarchive:
+        src: '/home/pi/config/latest_backup.tar.gz'
+        dest: '/home/pi/config'
+        remote_src: yes
+      when: backup_files.matched > 0
+
+    # OPTIONAL: Remove the .tar.gz after extraction
+    - name: Remove the local .tar.gz file
+      file:
+        path: '/home/pi/config/latest_backup.tar.gz'
+        state: absent
+      when: backup_files.matched > 0
+
+    # Ensure all files in /home/pi/config are owned by pi:pi
+    - name: Set ownership of all files in /home/pi/config to pi:pi
+      file:
+        path: '/home/pi/config'
+        state: directory
+        owner: pi
+        group: pi
+        recurse: yes

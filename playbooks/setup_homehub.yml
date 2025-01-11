@@ -1,0 +1,7 @@
+---
+- import_playbook: configuration/install_docker.yml
+- import_playbook: mount/mount_backups.yml
+- import_playbook: backup/retrieve_backup.yml
+- import_playbook: deploy/clone_repository.yml
+- import_playbook: deploy/deploy_docker_services.yml
+# - import_playbook: backup/create_backup.yml

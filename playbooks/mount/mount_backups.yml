@@ -1,0 +1,24 @@
+- name: Mount the SMB share
+  hosts: rpi_homehub
+  become: yes
+  vars_files:
+    - group_vars/all/vault.yml
+  tasks:
+    - name: Install CIFS utilities
+      apt:
+        name: cifs-utils
+        state: present
+        update_cache: yes
+
+    - name: Create local mount directory
+      file:
+        path: '/mnt/backups_smb'
+        state: directory
+
+    - name: Mount SMB share
+      mount:
+        path: '/mnt/backups_smb'
+        src: '//supermicro/backups'
+        fstype: cifs
+        state: mounted
+        opts: 'username={{ smb_username }},password={{ smb_password }},vers=3.0,rw'

@@ -1,0 +1,35 @@
+- name: Deploy docker services
+  hosts: rpi_homehub
+  become: yes
+
+  tasks:
+    - name: Ensure Portainer is running
+      community.docker.docker_container:
+        name: portainer
+        image: 'portainer/portainer-ce:2.25.1-linux-arm64'
+        state: started
+        restart_policy: always
+        ports:
+          - '9000:9000'
+        volumes:
+          - '/var/run/docker.sock:/var/run/docker.sock'
+          - '~/config/portainer-ce:/data'
+      become_user: pi
+
+    - name: Start Pi-hole container
+      community.docker.docker_compose_v2:
+        project_src: /home/pi/homehub/docker/pihole
+        state: present
+      become_user: pi
+
+    - name: Start Mosquitto container
+      community.docker.docker_compose_v2:
+        project_src: /home/pi/homehub/docker/mosquitto
+        state: present
+      become_user: pi
+
+    - name: Start zigbee2mqtt container
+      community.docker.docker_compose_v2:
+        project_src: /home/pi/homehub/docker/zigbee2mqtt
+        state: present
+      become_user: pi
