@@ -1,101 +1,113 @@
-# Flash Raspberry Pi OS Script
+# HomeHub Setup with Ansible
 
-A simple and efficient script to download a Raspberry Pi OS image, extract it, flash it onto an SD card or other storage device, and enable SSH for immediate use.
+This guide will walk you through the steps to initialize and configure your Raspberry Pi-based HomeHub using Ansible playbooks.
 
-## Table of Contents
+This repository in dependent of https://github.com/aafontoura/homehub.git
 
-- [Introduction](#introduction)
-- [Features](#features)
-- [Requirements](#requirements)
-- [Installation](#installation)
-- [Usage](#usage)
-- [Notes](#notes)
-- [Customization](#customization)
-- [Troubleshooting](#troubleshooting)
-- [Contributors](#contributors)
-- [License](#license)
+## Clone the Repository
 
-## Introduction
-
-The Flash Raspberry Pi OS Script automates the process of preparing an SD card for use with a Raspberry Pi. It downloads the specified Raspberry Pi OS `.xz` image, extracts it, flashes it to the target device, and sets up SSH by creating an `ssh` file in the boot partition. This simplifies the setup process, saving time and effort.
-
-## Features
-
-- Downloads Raspberry Pi OS images directly from a URL or uses a local `.xz` image.
-- Extracts the compressed `.xz` image file.
-- Flashes the OS image to a specified disk.
-- Automatically enables SSH by adding an `ssh` file to the boot partition.
-- Prompts for confirmation to avoid accidental disk erasure.
-- Mounts and unmounts the boot partition safely.
-
-## Requirements
-
-- macOS or Linux
-- `diskutil` (macOS) or equivalent disk utility
-- `xz` installed (available via Homebrew or your package manager)
-
-## Installation
-
-1. Clone the repository or download the script:
-
-   ```bash
-   git clone https://github.com/your-username/flash-pi-os-script.git
-   cd flash-pi-os-script
-
-   2.	Make the script executable:
-   ```
-
-chmod +x flash_pi.sh
-
-Usage 1. List available disks:
-
-diskutil list
-
-Identify the correct disk corresponding to your SD card (e.g., /dev/disk2).
-
-create and encrypted password:
+Start by cloning the repository containing the Ansible playbooks and scripts:
 
 ```bash
-echo 'your_password' | openssl passwd -6 -stdin
+git clone https://github.com/aafontoura/homehub-orchestrator
+cd homehub-orchestrator
 ```
 
-    2.	Run the script:
+## Initialize the Raspberry Pi Disk
 
-./flash_pi.sh <IMAGE_URL_OR_PATH> <DISK> <ENCRYPTED_PASSWORD>
+Use the initialize_pi_disk.sh script to flash the Raspberry Pi OS image onto the SD card and preconfigure it for first-time use.
+
+Steps: 1. Find the Target Disk:
+Use the diskutil command to identify the correct disk for the SD card.
+diskutil list
+Look for your SD card’s identifier (e.g., /dev/disk2). 2. Run the Script:
+Replace <IMAGE_URL_OR_PATH> with the Raspberry Pi OS image URL or path, with the SD card’s disk identifier, and with the desired password for the pi user.
 
 Example:
 
-./flash_pi.sh https://downloads.raspberrypi.org/raspios_lite_armhf_latest /dev/disk2 $6$6nVy8im3k8CbGCqf$oSb8oGepCWxzH7OnbE8t1y7FA7dD8Tzcsg4FdbEA5byL6l2EuXJlEYFWqDCZBZPJAwRFBqbfmTeBIk4ucSnqf0
+```bash
+./scripts/initialize_pi_disk.sh https://downloads.raspberrypi.org/raspios_lite_armhf_latest /dev/disk2 “your-secure-password”
+```
 
-    3.	Confirm flashing:
+The script will:
+• Download or use the provided OS image.
+• Flash the image to the SD card.
+• Enable SSH on first boot.
+• Set up the pi user with the provided password.
 
-The script will display disk details and ask for confirmation. Type y and press Enter to proceed. 4. Wait for the process to complete:
-• The script will extract the OS image, flash it, enable SSH, and unmount the disk.
-• Once finished, safely eject your SD card and insert it into your Raspberry Pi.
+The script requires root privileges to mount the disk, therefore you will be prompted for your system password.
 
-Notes
-• Ensure you have xz installed. On macOS, use Homebrew to install it:
+## Insert the SD Card into the Raspberry Pi:
 
-brew install xz
+Power on the Raspberry Pi with the SD card initialized in the previous step.
 
-    •	If the boot partition mounts as read-only, you may need to manually remount it as writable or adjust its permissions.
-    •	Always double-check the disk name to avoid overwriting the wrong device.
+## SSH Access and Key Authentication
 
-Customization
+### Find the Raspberry Pi’s IP Address:
 
-You can extend the script for additional configuration:
-• Add a wpa_supplicant.conf file for Wi-Fi settings.
-• Place additional first-boot scripts or configuration files in the boot partition.
+Use your router or a network scanning tool (e.g., nmap) to find the Raspberry Pi’s IP address.
 
-Troubleshooting
-• Script not running: Ensure the script is executable by running chmod +x flash_pi.sh.
-• Disk not detected: Verify the disk name using diskutil list or your system’s disk utility.
-• Boot partition is read-only: Remount it as writable using mount or diskutil commands.
-• xz command not found: Install it using Homebrew (brew install xz) or your system’s package manager.
+Example:
 
-Contributors
-• Your Name
+```bash
+nmap -sn 192.168.1.0/24
+```
 
-License
+### Copy the SSH Key to the Raspberry Pi:
 
-This project is licensed under the MIT License. See the LICENSE file for details.
+Replace <PI_IP> with the Raspberry Pi’s IP address.
+
+```bash
+ssh-copy-id pi@<PI_IP>
+```
+
+This will allow passwordless SSH access.
+
+### Verify SSH Access:
+
+Test the connection to ensure the SSH key was successfully copied:
+
+```bash
+ssh pi@<PI_IP>
+```
+
+## Run the HomeHub Setup Playbook
+
+Run the Ansible playbook to configure the Raspberry Pi for the HomeHub environment.
+
+Steps:
+
+## Update the Inventory File:
+
+Edit the inventory file in the repository to match the IP address of the Raspberry Pi:
+
+```
+[rpi_homehub]
+pi ansible_host=<PI_IP> ansible_user=pi ansible_ssh_private_key_file=~/.ssh/id_rsa
+```
+
+## Run the Playbook:
+
+Execute the playbook to set up the HomeHub environment:
+
+```bash
+ansible-playbook -i inventory playbooks/setup_homehub.yml
+```
+
+Directory Structure
+• playbooks/: Contains the Ansible playbooks for configuring the Raspberry Pi.
+• scripts/: Contains helper scripts such as initialize_pi_disk.sh.
+
+# Troubleshooting
+
+## SSH Connection Issues:
+
+Ensure:
+
+    •	The Raspberry Pi is powered on and connected to the network.
+    •	SSH is enabled on the Raspberry Pi.
+
+## Ansible Errors:
+
+    •	Ensure all dependencies are installed: ansible, python, docker, etc.
+    •	Verify the inventory file has the correct Raspberry Pi IP and SSH settings.
