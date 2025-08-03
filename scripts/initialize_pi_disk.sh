@@ -9,35 +9,46 @@ show_usage() {
     cat << EOF
 Usage: $0 [OPTIONS]
 
+This script is designed for macOS only.
+
 OPTIONS:
-    -i, --image <URL_OR_PATH>    Raspberry Pi OS image URL or local path
-                                 (defaults to current installed OS version if not specified)
-    -d, --disk <DISK>           Target disk device (REQUIRED, e.g., /dev/disk2)
-    -p, --password <PASSWORD>   Plain text password for pi user (REQUIRED)
-    -w, --wifi-ssid <SSID>      WiFi network name (SSID) for automatic connection
-    -k, --wifi-password <PASS>  WiFi network password
-    -c, --wifi-country <CODE>   WiFi country code (e.g., US, GB, DE) - defaults to NL
-    -f, --force-download        Force re-download of image even if cached locally
-    -h, --help                  Show this help message
+    -i, --image <URL_OR_PATH>     Raspberry Pi OS image URL or local path
+                                  (defaults to current installed OS version if not specified)
+    -d, --disk <DISK>            Target disk device (REQUIRED, e.g., /dev/disk2)
+    -p, --password <PASSWORD>    Plain text password for pi user (prompted if not provided)
+    --password-hash <HASH>       Pre-hashed password (use either --password or --password-hash)
+    -w, --wifi-ssid <SSID>       WiFi network name (SSID) for automatic connection
+    -k, --wifi-password <PASS>   WiFi network password
+    -c, --wifi-country <CODE>    WiFi country code (e.g., US, GB, DE) - defaults to NL
+    -r, --repo-ssh <URL>         SSH URL for your private repo (REQUIRED, e.g., git@github.com:user/repo.git)
+    -s, --ssh-key <PATH>         Path to SSH private key for repo access (REQUIRED)
+    -u, --os-user <USER>         OS username (defaults to pi)
+    --portainer-version <VER>    Portainer version (defaults to 2.25.1)
+    -f, --force-download         Force re-download of image even if cached locally
+    -h, --help                   Show this help message
 
 EXAMPLES:
-    # Use default OS image
-    $0 --disk /dev/disk2 --password "mypassword"
-    
-    # Use specific OS image
-    $0 --image https://downloads.raspberrypi.org/raspios_lite_armhf_latest --disk /dev/disk2 --password "mypassword"
-    
-    # Use local image file
-    $0 --image ./my-custom-image.img.xz --disk /dev/disk2 --password "mypassword"
-    
-    # Force re-download of cached image
-    $0 --disk /dev/disk2 --password "mypassword" --force-download
+    # Basic setup with GitHub repo and SSH key
+    $0 --disk /dev/disk2 --password "mypassword" \\
+       --repo-ssh "git@github.com:user/homehub.git" \\
+       --ssh-key ~/.ssh/id_ed25519_deploy
     
     # With WiFi configuration
-    $0 --disk /dev/disk2 --password "mypassword" --wifi-ssid "MyNetwork" --wifi-password "wifipass123"
+    $0 --disk /dev/disk2 --password "mypassword" \\
+       --wifi-ssid "MyNetwork" --wifi-password "wifipass123" \\
+       --repo-ssh "git@github.com:user/homehub.git" \\
+       --ssh-key ~/.ssh/id_ed25519_deploy
     
-    # With WiFi and specific country code
-    $0 --disk /dev/disk2 --password "mypassword" --wifi-ssid "MyNetwork" --wifi-password "wifipass123" --wifi-country "GB"
+    # With pre-hashed password (more secure)
+    $0 --disk /dev/disk2 --password-hash "\$6\$..." \\
+       --repo-ssh "git@github.com:user/homehub.git" \\
+       --ssh-key ~/.ssh/id_ed25519_deploy
+    
+    # With custom OS user and specific versions
+    $0 --disk /dev/disk2 --password "mypassword" \\
+       --os-user "homehub" --portainer-version "2.26.0" \\
+       --repo-ssh "git@github.com:user/homehub.git" \\
+       --ssh-key ~/.ssh/id_ed25519_deploy
 
 EOF
 }
@@ -46,9 +57,14 @@ EOF
 IMAGE_SOURCE=""
 DISK=""
 PLAINTEXT_PASSWORD=""
+PASSWORD_HASH=""
 WIFI_SSID=""
 WIFI_PASSWORD=""
 WIFI_COUNTRY="NL"  # Default to NL
+REPO_SSH="git@github.com:aafontoura/homehub-orchestrator.git"
+SSH_KEY_PATH=""
+OS_USER="pi"  # Default to pi
+PORTAINER_VERSION="2.25.1"  # Default version (multi-arch)
 FORCE_DOWNLOAD=false
 
 # Parse command line arguments
@@ -78,6 +94,26 @@ while [[ $# -gt 0 ]]; do
             WIFI_COUNTRY="$2"
             shift 2
             ;;
+        -r|--repo-ssh)
+            REPO_SSH="$2"
+            shift 2
+            ;;
+        -s|--ssh-key)
+            SSH_KEY_PATH="$2"
+            shift 2
+            ;;
+        -u|--os-user)
+            OS_USER="$2"
+            shift 2
+            ;;
+        --portainer-version)
+            PORTAINER_VERSION="$2"
+            shift 2
+            ;;
+        --password-hash)
+            PASSWORD_HASH="$2"
+            shift 2
+            ;;
         -f|--force-download)
             FORCE_DOWNLOAD=true
             shift
@@ -103,9 +139,46 @@ if [[ -z "$DISK" ]]; then
     exit 1
 fi
 
-if [[ -z "$PLAINTEXT_PASSWORD" ]]; then
-    echo "Error: Password parameter is required."
-    echo "Use --password or -p to specify the password for the pi user"
+# Handle password input
+if [[ -n "$PLAINTEXT_PASSWORD" && -n "$PASSWORD_HASH" ]]; then
+    echo "Error: Use either --password or --password-hash, not both."
+    echo ""
+    show_usage
+    exit 1
+fi
+
+if [[ -z "$PLAINTEXT_PASSWORD" && -z "$PASSWORD_HASH" ]]; then
+    read -rsp "Password for $OS_USER: " PLAINTEXT_PASSWORD
+    echo
+fi
+
+if [[ -z "$PLAINTEXT_PASSWORD" && -z "$PASSWORD_HASH" ]]; then
+    echo "Error: Password is required."
+    echo "Use --password or -p to specify the password, or --password-hash for pre-hashed password"
+    echo ""
+    show_usage
+    exit 1
+fi
+
+# if [[ -z "$REPO_SSH" ]]; then
+#     echo "Error: Repository SSH URL is required."
+#     echo "Use --repo-ssh or -r to specify the SSH URL for your private repo (e.g., git@github.com:user/repo.git)"
+#     echo ""
+#     show_usage
+#     exit 1
+# fi
+
+if [[ -z "$SSH_KEY_PATH" ]]; then
+    echo "Error: SSH key path is required."
+    echo "Use --ssh-key or -s to specify the path to your SSH private key for repo access"
+    echo ""
+    show_usage
+    exit 1
+fi
+
+if [[ ! -f "$SSH_KEY_PATH" ]]; then
+    echo "Error: SSH key file not found: $SSH_KEY_PATH"
+    echo "Please ensure the SSH key file exists and is accessible"
     echo ""
     show_usage
     exit 1
@@ -135,16 +208,41 @@ if [[ -z "$IMAGE_SOURCE" ]]; then
     IMAGE_SOURCE="$CURRENT_INSTALLED_OS_VERSION"
 fi
 
+# Check if running as root
+if [[ $EUID -ne 0 ]]; then
+    echo "Error: This script must be run as root (use sudo)." >&2
+    exit 1
+fi
+
+# Prerequisite checks (macOS only)
+need() { command -v "$1" >/dev/null || { echo "Error: Missing required tool: $1"; exit 1; }; }
+need curl
+need xz
+need openssl
+need dd
+need diskutil
+need file
+
 # Setup directories
 WORK_DIR="/tmp/rpi-image-work"
 CACHE_DIR="$HOME/.cache/homehub-orchestrator/images"
-MOUNT_POINT="/Volumes/boot"
+
+# Cleanup function
+cleanup() {
+    sync || true
+    
+    rm -rf "$WORK_DIR" 2>/dev/null || true
+}
+trap cleanup EXIT
 
 # Display configuration
 echo "=== Raspberry Pi Disk Initialization ==="
 echo "Image source: $IMAGE_SOURCE"
 echo "Target disk: $DISK"
-echo "Username: pi"
+echo "OS Username: $OS_USER"
+echo "Repository SSH: $REPO_SSH"
+echo "SSH Key: $SSH_KEY_PATH"
+echo "Portainer Version: $PORTAINER_VERSION"
 if [[ -n "$WIFI_SSID" ]]; then
     echo "WiFi SSID: $WIFI_SSID"
     echo "WiFi Country: $WIFI_COUNTRY"
@@ -158,6 +256,61 @@ if [[ "$FORCE_DOWNLOAD" == true ]]; then
 fi
 echo "=========================================="
 echo ""
+
+# Function to create firstboot.service systemd unit
+create_firstboot_service() {
+    local mount_point="$1"
+    cat > "$mount_point/firstboot.service" << 'EOF'
+[Unit]
+Description=One-time provisioning on first boot
+After=network-online.target
+Wants=network-online.target
+ConditionPathExists=/boot/firstboot.sh
+
+[Service]
+Type=oneshot
+ExecStart=/usr/local/sbin/firstboot.sh
+RemainAfterExit=yes
+
+[Install]
+WantedBy=multi-user.target
+EOF
+}
+
+# Function to create customized firstboot.sh provisioning script
+create_firstboot_script() {
+    local mount_point="$1"
+    local os_user="$2"
+    local repo_ssh="$3"
+    local portainer_version="$4"
+    local script_dir="$(dirname "${BASH_SOURCE[0]}")"
+    
+    # Check if the firstboot.sh template exists
+    if [[ ! -f "$script_dir/firstboot.sh" ]]; then
+        echo "Error: firstboot.sh template not found at $script_dir/firstboot.sh"
+        exit 1
+    fi
+    
+    echo "Copying and customizing firstboot.sh template..."
+    
+    # Copy the template and replace placeholders
+    sed \
+        -e "s/__OS_USER__/$os_user/g" \
+        -e "s|__REPO_SSH__|$repo_ssh|g" \
+        -e "s/__PORTAINER_VERSION__/$portainer_version/g" \
+        "$script_dir/firstboot.sh" > "$mount_point/firstboot.sh"
+    
+    chmod +x "$mount_point/firstboot.sh"
+    echo "FirstBoot script customized and copied to boot partition"
+}
+
+# Validate that the firstboot.sh template exists
+SCRIPT_DIR="$(dirname "${BASH_SOURCE[0]}")"
+if [[ ! -f "$SCRIPT_DIR/firstboot.sh" ]]; then
+    echo "Error: firstboot.sh template not found at $SCRIPT_DIR/firstboot.sh"
+    echo "This template file is required for the first-boot provisioning system."
+    exit 1
+fi
 
 echo "Creating work directory at $WORK_DIR"
 mkdir -p "$WORK_DIR"
@@ -375,35 +528,104 @@ fi
 echo "Unmounting disk $DISK..."
 diskutil unmountDisk force "$DISK"
 
+# Refuse to write to the system disk (macOS only)
+SYS_DISK="$(diskutil info / | awk -F': *' '/Parent Whole Disk/{print $2}')"
+if [[ -n "$SYS_DISK" && "/dev/$SYS_DISK" == "$DISK" ]]; then
+  echo "Error: $DISK appears to be the system disk. Aborting."; exit 1
+fi
+
 echo "Flashing $IMG_FILE to $DISK (this may take a while)..."
-sudo dd if="$IMG_FILE" of="$DISK" bs=4m conv=sync status=progress
+# macOS: use raw device for speed, no status=progress
+TARGET="${DISK/disk/rdisk}"
+sudo dd if="$IMG_FILE" of="$TARGET" bs=8m conv=sync
 sync
 
-echo "Mounting boot partition..."
+echo "Identifying partitions..."
+# Identify boot and root partitions (macOS only)
 BOOT_PARTITION="${DISK}s1"
-sudo mkdir -p "$MOUNT_POINT"
+ROOT_PARTITION="${DISK}s2"
 
-# This is a macOS-specific command; it should be simpler in Linux
-sudo mount -t msdos -o rw "$BOOT_PARTITION" "$MOUNT_POINT"
+# Verify partitions exist
+if ! diskutil list "$DISK" | grep -q "$(basename "${DISK}")s1" ; then
+    echo "Error: Boot partition not found on $DISK"
+    exit 1
+fi
+if ! diskutil list "$DISK" | grep -q "$(basename "${DISK}")s2"; then
+    echo "Error: Root partition not found on $DISK"
+    exit 1
+fi
+
+echo "Boot partition: $BOOT_PARTITION"
+echo "Root partition: $ROOT_PARTITION"
+
+
+
+# Mount boot partition (macOS only)
+echo "Mounting boot partition..."
+diskutil mount "$BOOT_PARTITION" >/dev/null
+BOOT_VOL_PATH="$(diskutil info "$BOOT_PARTITION" | awk -F': *' '/Mount Point/{print $2}')"
+[[ -z "$BOOT_VOL_PATH" || "$BOOT_VOL_PATH" == "Not mounted" ]] && { echo "Failed to mount boot"; exit 1; }
+# Either write to $BOOT_VOL_PATH directly, or bind it to your temp mount
 
 echo "Enabling SSH on first boot..."
-touch "$MOUNT_POINT/ssh"
+touch "$BOOT_VOL_PATH/ssh"
 
-# Encrypt the plaintext password
-echo "Encrypting the provided plaintext password..."
-ENCRYPTED_PASSWORD=$(echo "$PLAINTEXT_PASSWORD" | openssl passwd -6 -stdin)
+# Handle password encryption
+if [[ -n "$PASSWORD_HASH" ]]; then
+    ENCRYPTED_PASSWORD="$PASSWORD_HASH"
+    echo "Using provided password hash"
+else
+    echo "Encrypting the provided plaintext password..."
+    ENCRYPTED_PASSWORD=$(echo "$PLAINTEXT_PASSWORD" | openssl passwd -6 -stdin)
+fi
 
 # Create userconf file with the encrypted password
-USERNAME="pi"  # You can modify this to any username you prefer
-echo "Creating userconf file with username '$USERNAME' and the encrypted password..."
-echo "$USERNAME:$ENCRYPTED_PASSWORD" | sudo tee "$MOUNT_POINT/userconf" > /dev/null
+echo "Creating userconf file with username '$OS_USER' and the encrypted password..."
+echo "$OS_USER:$ENCRYPTED_PASSWORD" | sudo tee "$BOOT_VOL_PATH/userconf" > /dev/null
 
 # Configure WiFi if credentials were provided
 if [[ -n "$WIFI_SSID" ]]; then
     echo "Configuring WiFi for network '$WIFI_SSID'..."
     
-    # Create wpa_supplicant.conf file for WiFi configuration
-    sudo tee "$MOUNT_POINT/wpa_supplicant.conf" > /dev/null << EOF
+    # Generate UUID for NetworkManager connection
+    CONNECTION_UUID=$(uuidgen 2>/dev/null || echo "550e8400-e29b-41d4-a716-446655440000")
+    CONNECTION_ID="HomeHub-WiFi"
+    
+    # Create NetworkManager config in boot partition (macOS only)
+    # The firstboot script will handle the installation
+    sudo mkdir -p "$BOOT_VOL_PATH/network"
+    
+    # Create the NetworkManager connection file
+    sudo tee "$BOOT_VOL_PATH/network/wifi-connection.nmconnection" > /dev/null << EOF
+[connection]
+id=${CONNECTION_ID}
+uuid=${CONNECTION_UUID}
+type=wifi
+autoconnect=true
+autoconnect-priority=100
+
+[wifi]
+mode=infrastructure
+ssid=${WIFI_SSID}
+band=bg
+channel=0
+
+[wifi-security]
+auth-alg=open
+key-mgmt=wpa-psk
+psk=${WIFI_PASSWORD}
+
+[ipv4]
+method=auto
+dns=8.8.8.8;8.8.4.4;
+
+[ipv6]
+addr-gen-mode=stable-privacy
+method=auto
+EOF
+    
+    # Also create the legacy wpa_supplicant.conf as fallback for older images
+    sudo tee "$BOOT_VOL_PATH/wpa_supplicant.conf" > /dev/null << EOF
 ctrl_interface=DIR=/var/run/wpa_supplicant GROUP=netdev
 update_config=1
 country=$WIFI_COUNTRY
@@ -416,20 +638,86 @@ network={
 EOF
     
     echo "WiFi configuration created for network '$WIFI_SSID' with country code '$WIFI_COUNTRY'"
+    echo "Using boot partition NetworkManager config (will be installed by firstboot script)"
 else
     echo "No WiFi configuration provided, Pi will require Ethernet connection"
 fi
 
+# Setup first-boot execution (macOS only)
+echo "Setting up first-boot execution..."
+# Append systemd.run to cmdline.txt for one-time execution
+CMDLINE="$BOOT_VOL_PATH/cmdline.txt"
+if [[ -f "$CMDLINE" ]]; then
+    # Add systemd.run parameters to cmdline.txt (only if not already present)
+    if ! grep -q 'systemd.run=/boot/firstboot.sh' "$CMDLINE"; then
+        sudo sed -i '' -e 's/$/ systemd.run=\/boot\/firstboot.sh systemd.run_success_action=reboot systemd.run_failure_action=emergency/' "$CMDLINE"
+        echo "Added systemd.run to cmdline.txt for first-boot execution"
+    else
+        echo "systemd.run already present in cmdline.txt"
+    fi
+else
+    echo "Warning: cmdline.txt not found, first-boot may not execute"
+fi
+
+# Create systemd first-boot files
+echo "Creating systemd first-boot service and script..."
+create_firstboot_service "$BOOT_VOL_PATH"
+create_firstboot_script "$BOOT_VOL_PATH" "$OS_USER" "$REPO_SSH" "$PORTAINER_VERSION"
+
+# Setup SSH deploy key
+echo "Setting up SSH deploy key for repository access..."
+sudo mkdir -p "$BOOT_VOL_PATH/keys"
+sudo cp "$SSH_KEY_PATH" "$BOOT_VOL_PATH/keys/id_ed25519"
+if [[ -f "${SSH_KEY_PATH}.pub" ]]; then
+    sudo cp "${SSH_KEY_PATH}.pub" "$BOOT_VOL_PATH/keys/id_ed25519.pub"
+else
+    echo "Warning: Public key file ${SSH_KEY_PATH}.pub not found"
+    echo "Generating public key from private key..."
+    ssh-keygen -y -f "$SSH_KEY_PATH" | sudo tee "$BOOT_VOL_PATH/keys/id_ed25519.pub" > /dev/null
+fi
+
+# Set appropriate permissions for the keys
+sudo chmod 600 "$BOOT_VOL_PATH/keys/id_ed25519"
+sudo chmod 644 "$BOOT_VOL_PATH/keys/id_ed25519.pub"
+
+echo "First-boot provisioning system configured successfully!"
+echo "Template used: scripts/firstboot.sh"
+echo "The Pi will automatically:"
+echo "  - Install Docker and Docker Compose"
+echo "  - Clone your repository: $REPO_SSH"
+echo "  - Pre-pull Docker images for faster startup"
+echo "  - Setup Portainer on port 9000"
+echo "  - Start all HomeHub services automatically"
+echo "  - Clean up deploy keys after setup"
+
 sleep 1
 
 echo "Unmounting boot partition..."
-diskutil unmount "$BOOT_PARTITION"
+diskutil unmount "$BOOT_PARTITION" || true
 
-rm -r "$WORK_DIR"
+# Cleanup is handled by trap
 
-echo "Done! The SD card is flashed, SSH is enabled, and user '$USERNAME' is set up with the provided password."
+echo "=== Setup Complete! ==="
+echo "The SD card is ready with:"
+echo "  ✓ Raspberry Pi OS flashed"
+echo "  ✓ SSH enabled"
+echo "  ✓ User '$OS_USER' configured"
+echo "  ✓ SystemD first-boot provisioning system installed"
+echo "  ✓ Deploy SSH key for repository access"
 if [[ -n "$WIFI_SSID" ]]; then
-    echo "WiFi is configured for network '$WIFI_SSID'. The Pi will connect automatically on first boot."
+    echo "  ✓ WiFi configured for network '$WIFI_SSID'"
 else
-    echo "No WiFi configured. Connect the Pi via Ethernet cable for network access."
+    echo "  ! WiFi not configured - Ethernet connection required"
 fi
+echo ""
+echo "On first boot, the Pi will automatically:"
+echo "  1. Connect to internet (WiFi or Ethernet)"
+echo "  2. Install Docker and Docker Compose v2"
+echo "  3. Clone your repository: $REPO_SSH"
+echo "  4. Setup Portainer web interface (port 9000)"
+echo "  5. Start all HomeHub Docker services"
+echo "  6. Clean up deploy keys for security"
+echo ""
+echo "Monitor progress: ssh $OS_USER@<pi-ip> 'tail -f /var/log/firstboot.log'"
+echo "Access Portainer: http://<pi-ip>:9000"
+echo "HomeHub services will be available on their configured ports"
