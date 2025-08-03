@@ -6,7 +6,7 @@
     - name: Ensure Portainer is running
       community.docker.docker_container:
         name: portainer
-        image: 'portainer/portainer-ce:2.25.1-linux-arm64'
+        image: 'portainer/portainer-ce:2.25.1'
         state: started
         restart_policy: always
         ports:
@@ -31,5 +31,17 @@
     - name: Start zigbee2mqtt container
       community.docker.docker_compose_v2:
         project_src: /home/pi/homehub/docker/zigbee2mqtt
+        state: present
+      become_user: pi
+    
+    - name: Start hass-postgres container
+      community.docker.docker_compose_v2:
+        project_src: /home/pi/homehub/docker/hass-postgres
+        state: present
+      become_user: pi
+
+    - name: Start home assistant container
+      community.docker.docker_compose_v2:
+        project_src: /home/pi/homehub/docker/homeassistant
         state: present
       become_user: pi
