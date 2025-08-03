@@ -3,7 +3,7 @@
   become: yes
 
   vars_files:
-    - group_vars/all/clone_repo.yml
+    - group_vars/all/github_key.yml
 
   tasks:
     - name: Install Git
